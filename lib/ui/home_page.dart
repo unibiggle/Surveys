@@ -7,12 +7,22 @@ import '../services/sync_service.dart';
 import 'teams/teams_page.dart';
 import 'templates/templates_page.dart';
 import 'surveys/surveys_page.dart';
+bool _didInitialSync = false;
+
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedTeam = ref.watch(selectedTeamProvider);
+    if (selectedTeam != null && !_didInitialSync) {
+      _didInitialSync = true;
+      // Pull templates on first entry to persist across reinstalls
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final sync = ref.read(syncServiceProvider);
+        await sync.pullTemplates();
+      });
+    }
     return Scaffold(
       appBar: AppBar(
         title: Text('Surveys${selectedTeam != null ? ' • ${selectedTeam.name}' : ''}'),

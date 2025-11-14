@@ -64,6 +64,9 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
   TemplateSchema? _schema;
   final Map<String, dynamic> _answers = {}; // questionId -> value
   bool _loading = true;
+  late final ScrollController _scrollController = ScrollController();
+  final List<GlobalKey> _sectionKeys = [];
+  List<bool> _expanded = const [];
 
   @override
   void initState() {
@@ -83,6 +86,9 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
     setState(() {
       _schema = schema;
       _loading = false;
+      _expanded = List<bool>.generate(schema.sections.length, (i) => i == 0);
+      _sectionKeys.clear();
+      _sectionKeys.addAll(List.generate(schema.sections.length, (_) => GlobalKey()));
     });
   }
 
@@ -161,7 +167,7 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
     if (_loading || _schema == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    final section = _schema!.sections.first;
+    final sections = _schema!.sections;
     return Scaffold(
       appBar: AppBar(
         title: Text(_schema!.name),
@@ -171,26 +177,94 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
         ],
       ),
       body: ListView(
+        controller: _scrollController,
         padding: const EdgeInsets.all(16),
         children: [
-          Text(section.title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          ...section.items.map((q) => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          if (_schema!.brandName != null || _schema!.brandLogoUrl != null || _schema!.brandLogoStoragePath != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Row(
                 children: [
-                  _QuestionAnswerWidget(
-                    key: ValueKey(q.id),
-                    item: q,
-                    value: _answers[q.id],
-                    onChanged: (val) => setState(() => _answers[q.id] = val),
-                  ),
-                  if (q.allowAttachment)
+                  if (_schema!.brandLogoUrl != null)
                     Padding(
-                      padding: const EdgeInsets.only(left: 4.0, top: 6.0, bottom: 12.0),
-                      child: _AttachmentsBlock(surveyId: widget.surveyId, questionId: q.id),
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Image.network(_schema!.brandLogoUrl!, width: 40, height: 40, errorBuilder: (_, __, ___) => const SizedBox.shrink()),
                     ),
+                  if (_schema!.brandLogoStoragePath != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: FutureBuilder<String>(
+                        future: Supabase.instance.client.storage
+                            .from('branding')
+                            .createSignedUrl(_schema!.brandLogoStoragePath!, 3600)
+                            .then((r) => r as String),
+                        builder: (context, snap) {
+                          if (!snap.hasData) return const SizedBox(width: 40, height: 40);
+                          return Image.network(snap.data!, width: 40, height: 40, errorBuilder: (_, __, ___) => const SizedBox.shrink());
+                        },
+                      ),
+                    ),
+                  if (_schema!.brandName != null)
+                    Text(_schema!.brandName!, style: Theme.of(context).textTheme.titleMedium),
                 ],
-              )),
+              ),
+            ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: List.generate(sections.length, (i) {
+                final s = sections[i];
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: ChoiceChip(
+                    label: Text(s.title),
+                    selected: _expanded[i],
+                    onSelected: (_) async {
+                      setState(() {
+                        for (int j = 0; j < _expanded.length; j++) _expanded[j] = (j == i);
+                      });
+                      await Future.delayed(const Duration(milliseconds: 100));
+                      final ctx = _sectionKeys[i].currentContext;
+                      if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 250));
+                    },
+                  ),
+                );
+              }),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...List.generate(sections.length, (i) {
+            final s = sections[i];
+            return Container(
+              key: _sectionKeys[i],
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ExpansionTile(
+                initiallyExpanded: _expanded[i],
+                title: Text(s.title, style: Theme.of(context).textTheme.titleLarge),
+                onExpansionChanged: (v) => setState(() => _expanded[i] = v),
+                children: [
+                  const SizedBox(height: 8),
+                  ...s.items.map((q) => Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _QuestionAnswerWidget(
+                            key: ValueKey(q.id),
+                            item: q,
+                            value: _answers[q.id],
+                            onChanged: (val) => setState(() => _answers[q.id] = val),
+                          ),
+                          if (q.allowAttachment)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4.0, top: 6.0, bottom: 12.0),
+                              child: _AttachmentsBlock(surveyId: widget.surveyId, questionId: q.id),
+                            ),
+                        ],
+                      )),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            );
+          }),
           const SizedBox(height: 80),
         ],
       ),
@@ -567,6 +641,16 @@ class _AttachmentsBlock extends ConsumerWidget {
                         },
                   icon: const Icon(Icons.edit),
                   label: const Text('Sketch over photo'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: team == null
+                      ? null
+                      : () async {
+                          final svc = AttachmentsService(db, Supabase.instance.client);
+                          await svc.addSketchOverCamera(context: context, teamId: team.id, surveyId: surveyId, questionId: questionId);
+                        },
+                  icon: const Icon(Icons.add_a_photo),
+                  label: const Text('Sketch over camera'),
                 ),
               ],
             ),

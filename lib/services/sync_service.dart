@@ -17,12 +17,18 @@ class SyncService {
   Future<void> pullTemplates() async {
     final team = _ref.read(selectedTeamProvider);
     if (team == null) return;
-    final res = await _client
+    final teamRows = await _client
         .from('templates')
         .select('id,team_id,name,version,schema_json,published,updated_at')
         .eq('team_id', team.id);
-    final rows = (res as List<dynamic>).cast<Map<String, dynamic>>();
-    for (final row in rows) {
+    final sharedRows = await _client
+        .from('templates')
+        .select('id,team_id,name,version,schema_json,published,updated_at')
+        .filter('team_id', 'is', null);
+    final all = <Map<String, dynamic>>[]
+      ..addAll((teamRows as List<dynamic>).cast<Map<String, dynamic>>())
+      ..addAll((sharedRows as List<dynamic>).cast<Map<String, dynamic>>());
+    for (final row in all) {
       await _db.upsertTemplate(
         id: row['id'] as String,
         name: row['name'] as String,
@@ -43,6 +49,18 @@ class SyncService {
       try {
         final payload = jsonDecode(op.payloadJson) as Map<String, dynamic>;
         switch (op.entity) {
+          case 'templates':
+            // Ensure team_id present (prefer from payload, else selected team)
+            payload['team_id'] = payload['team_id'] ?? team.id;
+            await _client.from('templates').upsert({
+              'id': payload['id'],
+              'team_id': payload['team_id'],
+              'name': payload['name'],
+              'version': payload['version'],
+              'schema_json': payload['schema_json'],
+              'published': payload['published'] ?? false,
+            });
+            break;
           case 'surveys':
             payload['team_id'] = team.id;
             await _client.from('surveys').upsert(payload);
@@ -70,4 +88,3 @@ class SyncService {
 final syncServiceProvider = Provider<SyncService>((ref) {
   return SyncService(ref.read(databaseProvider), Supabase.instance.client, ref);
 });
-

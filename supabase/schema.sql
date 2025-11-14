@@ -304,8 +304,16 @@ create policy templates_select on public.templates
 drop policy if exists templates_mutate on public.templates;
 create policy templates_mutate on public.templates
   for all to authenticated
-  using (exists(select 1 from public.memberships m where m.team_id = templates.team_id and m.user_id = auth.uid() and m.role in ('owner','admin')))
-  with check (exists(select 1 from public.memberships m where m.team_id = templates.team_id and m.user_id = auth.uid() and m.role in ('owner','admin')));
+  using (
+    -- Team-scoped templates: admins/owners can mutate
+    exists(select 1 from public.memberships m where m.team_id = templates.team_id and m.user_id = auth.uid() and m.role in ('owner','admin'))
+    -- Shared library: allow mutating rows with no team (published/shared)
+    or templates.team_id is null
+  )
+  with check (
+    exists(select 1 from public.memberships m where m.team_id = templates.team_id and m.user_id = auth.uid() and m.role in ('owner','admin'))
+    or templates.team_id is null
+  );
 
 -- Surveys policies (team members can create/read/update)
 drop policy if exists surveys_read on public.surveys;

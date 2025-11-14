@@ -107,6 +107,17 @@ class AttachmentsService {
     return path;
   }
 
+  Future<String> uploadBrandLogoBytes({
+    required String teamId,
+    required String filenameHint,
+    required Uint8List bytes,
+  }) async {
+    final ext = filenameHint.split('.').last.toLowerCase();
+    final path = '${teamId}/${_uuid.v4()}.$ext';
+    await _client.storage.from('branding').uploadBinary(path, bytes, fileOptions: const FileOptions(cacheControl: '3600', upsert: true));
+    return path;
+  }
+
   Future<void> _afterUpload({required String id, required String surveyId, required String questionId, required String storagePath, required String type}) async {
     await _db.setAttachmentStoragePath(id: id, storagePath: storagePath);
     try {
@@ -163,6 +174,28 @@ class AttachmentsService {
       if (result == null || result.files.isEmpty) return;
       bgBytes = await File(result.files.first.path!).readAsBytes();
     }
+    await addSketch(context: context, teamId: teamId, surveyId: surveyId, questionId: questionId, backgroundBytes: bgBytes);
+  }
+
+  Future<void> addSketchOverCamera({
+    required BuildContext context,
+    required String teamId,
+    required String surveyId,
+    required String questionId,
+  }) async {
+    Uint8List? bgBytes;
+    if (kIsWeb) {
+      // Not supported directly; fall back to sketch only
+      await addSketch(context: context, teamId: teamId, surveyId: surveyId, questionId: questionId);
+      return;
+    }
+    if (Platform.isIOS || Platform.isAndroid) {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.camera);
+      if (picked == null) return;
+      bgBytes = await picked.readAsBytes();
+    }
+    if (bgBytes == null) return;
     await addSketch(context: context, teamId: teamId, surveyId: surveyId, questionId: questionId, backgroundBytes: bgBytes);
   }
 }

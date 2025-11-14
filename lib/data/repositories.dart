@@ -29,6 +29,20 @@ class TemplateRepository {
       teamId: teamId,
       published: published,
     );
+    // Enqueue for sync with Supabase
+    await _db.enqueueOp(
+      entity: 'templates',
+      entityId: id,
+      op: 'upsert',
+      payloadJson: jsonEncode({
+        'id': id,
+        'team_id': teamId,
+        'name': schema.name,
+        'version': schema.version,
+        'schema_json': schema.toJson(),
+        'published': published,
+      }),
+    );
     return id;
   }
 

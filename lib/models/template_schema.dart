@@ -56,12 +56,18 @@ class TemplateSchema {
   final String name;
   final int version;
   final List<TemplateSection> sections;
+  final String? brandName;
+  final String? brandLogoUrl;
+  final String? brandLogoStoragePath;
 
   TemplateSchema({
     required this.id,
     required this.name,
     required this.version,
     required this.sections,
+    this.brandName,
+    this.brandLogoUrl,
+    this.brandLogoStoragePath,
   });
 
   Map<String, dynamic> toJson() => {
@@ -69,6 +75,9 @@ class TemplateSchema {
         'name': name,
         'version': version,
         'sections': sections.map((e) => e.toJson()).toList(),
+        if (brandName != null) 'brandName': brandName,
+        if (brandLogoUrl != null) 'brandLogoUrl': brandLogoUrl,
+        if (brandLogoStoragePath != null) 'brandLogoStoragePath': brandLogoStoragePath,
       };
 
   static TemplateSchema fromJson(Map<String, dynamic> json) => TemplateSchema(
@@ -78,6 +87,9 @@ class TemplateSchema {
         sections: (json['sections'] as List<dynamic>)
             .map((e) => TemplateSection.fromJson(e as Map<String, dynamic>))
             .toList(),
+        brandName: json['brandName'] as String?,
+        brandLogoUrl: json['brandLogoUrl'] as String?,
+        brandLogoStoragePath: json['brandLogoStoragePath'] as String?,
       );
 
   static String encode(TemplateSchema schema) => jsonEncode(schema.toJson());
