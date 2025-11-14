@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:drift/drift.dart' as d;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -97,7 +99,9 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
     // Validate required
     final missing = <String>[];
     for (final section in _schema!.sections) {
+      if (!_isSectionVisible(section)) continue;
       for (final q in section.items) {
+        if (!_isQuestionVisible(q)) continue;
         if (q.required) {
           final v = _answers[q.id];
           final isMissing = v == null || (v is String && v.trim().isEmpty);
@@ -127,14 +131,120 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
 
   Future<void> _exportPdf() async {
     if (_schema == null) return;
-    final qa = <Map<String, String>>[];
+    final items = <Map<String, dynamic>>[];
+    final actions = <Map<String, String>>[];
+    final db = ref.read(databaseProvider);
+    final client = Supabase.instance.client;
+
     for (final section in _schema!.sections) {
       for (final q in section.items) {
         final v = _answers[q.id];
-        qa.add({'question': q.label, 'answer': _displayValue(q, v)});
+        final note = _answers['note:${q.id}'] as String?;
+        final action = _answers['action:${q.id}'] as String?;
+
+        // Collect images for this question
+        final atts = await (db.select(db.attachments)
+              ..where((a) => a.surveyId.equals(widget.surveyId) & a.questionId.equals(q.id)))
+            .get();
+        final imgs = <Uint8List>[];
+        for (final a in atts) {
+          try {
+            if (a.storagePath != null && a.storagePath!.isNotEmpty) {
+              final bytes = await client.storage.from('attachments').download(a.storagePath!);
+              imgs.add(bytes);
+            }
+          } catch (_) {
+            // ignore failed downloads
+          }
+        }
+
+        items.add({
+          'question': q.label,
+          'answer': _displayValue(q, v),
+          if (note != null && note.isNotEmpty) 'note': note,
+          'images': imgs,
+        });
+        if (action != null && action.isNotEmpty) {
+          actions.add({'question': q.label, 'action': action});
+        }
       }
     }
-    await PdfService.shareSurveyPdf(title: _schema!.name, qaPairs: qa);
+    await PdfService.shareSurveyPdfRich(title: _schema!.name, items: items, actions: actions);
+  }
+
+  Future<void> _openMediaSheet({required String questionId}) async {
+    final team = ref.read(selectedTeamProvider);
+    if (team == null) return;
+    final db = ref.read(databaseProvider);
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Wrap(
+              runSpacing: 8,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_camera),
+                  title: const Text('Camera'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await AttachmentsService(db, Supabase.instance.client)
+                        .addPhoto(context: context, teamId: team.id, surveyId: widget.surveyId, questionId: questionId);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('Gallery'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await AttachmentsService(db, Supabase.instance.client)
+                        .addPhotoFromGallery(context: context, teamId: team.id, surveyId: widget.surveyId, questionId: questionId);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.brush),
+                  title: const Text('Sketch'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await AttachmentsService(db, Supabase.instance.client)
+                        .addSketch(context: context, teamId: team.id, surveyId: widget.surveyId, questionId: questionId);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Sketch over photo'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await AttachmentsService(db, Supabase.instance.client)
+                        .addSketchOverPhotoFromGallery(context: context, teamId: team.id, surveyId: widget.surveyId, questionId: questionId);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.add_a_photo),
+                  title: const Text('Sketch over camera'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await AttachmentsService(db, Supabase.instance.client)
+                        .addSketchOverCamera(context: context, teamId: team.id, surveyId: widget.surveyId, questionId: questionId);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.draw),
+                  title: const Text('Signature'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await AttachmentsService(db, Supabase.instance.client)
+                        .addSignature(context: context, teamId: team.id, surveyId: widget.surveyId, questionId: questionId);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   String _displayValue(QuestionItem q, dynamic v) {
@@ -159,7 +269,70 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
         } catch (_) {
           return v.toString();
         }
+      case QuestionType.number:
+        return v.toString();
+      case QuestionType.checkbox:
+        return (v == true) ? 'Yes' : 'No';
+      case QuestionType.media:
+        return '(media)';
+      case QuestionType.slider:
+        return v.toString();
+      case QuestionType.annotation:
+        return '(annotation)';
+      case QuestionType.signature:
+        return '(signature)';
+      case QuestionType.sketch:
+        return '(sketch)';
+      case QuestionType.location:
+        return v.toString();
+      case QuestionType.person:
+        return v.toString();
+      case QuestionType.instruction:
+        return '';
     }
+  }
+
+  bool _evalCondition(VisibleCondition c) {
+    final ans = _answers[c.questionId];
+    final op = c.op;
+    final val = c.value.trim();
+    if (ans == null) return false;
+    if (ans is List) {
+      final contains = ans.map((e) => e.toString()).contains(val);
+      if (op == 'contains') return contains;
+      if (op == 'equals') return contains; // equals any in list
+      if (op == 'notEquals') return !contains;
+      return contains;
+    }
+    final a = ans.toString().trim();
+    switch (op) {
+      case 'equals':
+        return a == val;
+      case 'notEquals':
+        return a != val;
+      case 'contains':
+        return a.contains(val);
+      default:
+        return a == val;
+    }
+  }
+
+  bool _isQuestionVisible(QuestionItem q) {
+    final conds = q.visibleIf ?? const [];
+    if (conds.isEmpty) return true;
+    for (final c in conds) {
+      if (!_evalCondition(c)) return false;
+    }
+    return true;
+  }
+
+  bool _isSectionVisible(TemplateSection s) {
+    final conds = s.visibleIf ?? const [];
+    if (conds.isEmpty) return true;
+    for (final c in conds) {
+      if (!_evalCondition(c)) return false;
+    }
+    return true;
   }
 
   @override
@@ -212,7 +385,9 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: List.generate(sections.length, (i) {
+              children: List.generate(sections.length, (i) => i)
+                  .where((i) => _isSectionVisible(sections[i]))
+                  .map((i) {
                 final s = sections[i];
                 return Padding(
                   padding: const EdgeInsets.only(right: 8.0),
@@ -229,11 +404,13 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
                     },
                   ),
                 );
-              }),
+              }).toList(),
             ),
           ),
           const SizedBox(height: 8),
-          ...List.generate(sections.length, (i) {
+          ...List.generate(sections.length, (i) => i)
+              .where((i) => _isSectionVisible(sections[i]))
+              .map((i) {
             final s = sections[i];
             return Container(
               key: _sectionKeys[i],
@@ -244,7 +421,7 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
                 onExpansionChanged: (v) => setState(() => _expanded[i] = v),
                 children: [
                   const SizedBox(height: 8),
-                  ...s.items.map((q) => Column(
+                  ...s.items.where(_isQuestionVisible).map((q) => Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           _QuestionAnswerWidget(
@@ -253,11 +430,82 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
                             value: _answers[q.id],
                             onChanged: (val) => setState(() => _answers[q.id] = val),
                           ),
-                          if (q.allowAttachment)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 4.0, top: 6.0, bottom: 12.0),
-                              child: _AttachmentsBlock(surveyId: widget.surveyId, questionId: q.id),
+                          // Inline actions (Note / Media / Action)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6.0),
+                            child: Row(
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    final initial = (_answers['note:${q.id}'] as String?) ?? '';
+                                    final ctrl = TextEditingController(text: initial);
+                                    final text = await showDialog<String>(
+                                      context: context,
+                                      builder: (_) => AlertDialog(
+                                        title: const Text('Add note'),
+                                        content: TextField(
+                                          controller: ctrl,
+                                          minLines: 3,
+                                          maxLines: null,
+                                          decoration: const InputDecoration(border: OutlineInputBorder()),
+                                          textCapitalization: TextCapitalization.sentences,
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                                          ElevatedButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Save')),
+                                        ],
+                                      ),
+                                    );
+                                    if (text != null) {
+                                      setState(() => _answers['note:${q.id}'] = text);
+                                    }
+                                  },
+                                  icon: const Icon(Icons.note_add_outlined),
+                                  label: const Text('Note'),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: () => _openMediaSheet(questionId: q.id),
+                                  icon: const Icon(Icons.perm_media_outlined),
+                                  label: const Text('Media'),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: () async {
+                                    final initial = (_answers['action:${q.id}'] as String?) ?? '';
+                                    final ctrl = TextEditingController(text: initial);
+                                    final text = await showDialog<String>(
+                                      context: context,
+                                      builder: (_) => AlertDialog(
+                                        title: const Text('Action'),
+                                        content: TextField(
+                                          controller: ctrl,
+                                          minLines: 2,
+                                          maxLines: null,
+                                          decoration: const InputDecoration(hintText: 'Describe follow-up action', border: OutlineInputBorder()),
+                                          textCapitalization: TextCapitalization.sentences,
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                                          ElevatedButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Save')),
+                                        ],
+                                      ),
+                                    );
+                                    if (text != null) {
+                                      setState(() => _answers['action:${q.id}'] = text);
+                                    }
+                                  },
+                                  icon: const Icon(Icons.task_alt_outlined),
+                                  label: const Text('Action'),
+                                ),
+                              ],
                             ),
+                          ),
+                          // Show attachments list below actions
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4.0, top: 6.0, bottom: 12.0),
+                            child: _AttachmentsBlock(surveyId: widget.surveyId, questionId: q.id),
+                          ),
                         ],
                       )),
                   const SizedBox(height: 8),
@@ -305,7 +553,246 @@ class _QuestionAnswerWidget extends StatelessWidget {
         return _Likert5Answer(item: item, value: (value as int?) ?? 0, onChanged: onChanged);
       case QuestionType.dateTime:
         return _DateTimeAnswer(item: item, value: value, onChanged: onChanged);
+      case QuestionType.number:
+        return _NumberAnswer(item: item, value: (value is num) ? value : null, onChanged: onChanged);
+      case QuestionType.checkbox:
+        return _CheckboxAnswer(item: item, value: value == true, onChanged: onChanged);
+      case QuestionType.media:
+        return _MediaAnswer(item: item, surveyId: (context.findAncestorWidgetOfExactType<SurveyRunnerPage>()!).surveyId);
+      case QuestionType.slider:
+        return _SliderAnswer(item: item, value: (value as num?)?.toDouble() ?? 0.0, onChanged: onChanged);
+      case QuestionType.annotation:
+        return _AnnotationAnswer(item: item);
+      case QuestionType.signature:
+        return _SignatureAnswer(item: item);
+      case QuestionType.sketch:
+        return _SketchOnlyAnswer(item: item);
+      case QuestionType.location:
+        return _TextAnswer(item: item, value: value?.toString() ?? '', onChanged: onChanged);
+      case QuestionType.person:
+        return _PersonAnswer(item: item, value: value?.toString(), onChanged: onChanged);
+      case QuestionType.instruction:
+        return _Instruction(item: item);
     }
+  }
+}
+
+class _NumberAnswer extends StatelessWidget {
+  const _NumberAnswer({required this.item, required this.value, required this.onChanged});
+  final QuestionItem item;
+  final num? value;
+  final ValueChanged<num?> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = TextEditingController(text: value?.toString() ?? '');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: TextField(
+        controller: ctrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(labelText: item.label + (item.required ? ' *' : ''), border: const OutlineInputBorder()),
+        onChanged: (v) => onChanged(num.tryParse(v)),
+      ),
+    );
+  }
+}
+
+class _CheckboxAnswer extends StatelessWidget {
+  const _CheckboxAnswer({required this.item, required this.value, required this.onChanged});
+  final QuestionItem item;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile(
+      title: Text(item.label + (item.required ? ' *' : '')),
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _SliderAnswer extends StatelessWidget {
+  const _SliderAnswer({required this.item, required this.value, required this.onChanged});
+  final QuestionItem item;
+  final double value;
+  final ValueChanged<double> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    double min = 0, max = 10;
+    final opts = item.options ?? const [];
+    if (opts.length >= 2) {
+      final a = double.tryParse(opts[0]);
+      final b = double.tryParse(opts[1]);
+      if (a != null && b != null) {
+        min = a; max = b;
+      }
+    }
+    final v = value.clamp(min, max);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(item.label + (item.required ? ' *' : '')),
+          Slider(
+            value: v,
+            min: min,
+            max: max,
+            divisions: (max - min).toInt() > 0 ? (max - min).toInt() : null,
+            label: v.toStringAsFixed(0),
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Instruction extends StatelessWidget {
+  const _Instruction({required this.item});
+  final QuestionItem item;
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Text(item.label, style: Theme.of(context).textTheme.bodyLarge),
+    );
+  }
+}
+
+class _PersonAnswer extends ConsumerStatefulWidget {
+  const _PersonAnswer({required this.item, required this.value, required this.onChanged});
+  final QuestionItem item;
+  final String? value;
+  final ValueChanged<String> onChanged;
+  @override
+  ConsumerState<_PersonAnswer> createState() => _PersonAnswerState();
+}
+
+class _PersonAnswerState extends ConsumerState<_PersonAnswer> {
+  late TextEditingController _ctrl;
+  @override
+  void initState() {
+    super.initState();
+    final client = Supabase.instance.client;
+    final initial = widget.value ?? client.auth.currentUser?.userMetadata?['full_name'] as String? ?? client.auth.currentUser?.email ?? '';
+    _ctrl = TextEditingController(text: initial);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fullName = ref.watch(currentUserFullNameProvider);
+    fullName.whenData((name) {
+      if ((name != null && name.isNotEmpty) && _ctrl.text.trim().isEmpty) {
+        _ctrl.text = name;
+        widget.onChanged(name);
+      }
+    });
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: TextField(
+        controller: _ctrl,
+        decoration: InputDecoration(
+          labelText: widget.item.label.isEmpty ? 'Person' : widget.item.label,
+          border: const OutlineInputBorder(),
+        ),
+        textCapitalization: TextCapitalization.words,
+        onChanged: widget.onChanged,
+      ),
+    );
+  }
+}
+
+class _MediaAnswer extends ConsumerWidget {
+  const _MediaAnswer({required this.item, required this.surveyId});
+  final QuestionItem item;
+  final String surveyId;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final team = ref.watch(selectedTeamProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(item.label + (item.required ? ' *' : '')),
+        const SizedBox(height: 8),
+        _AttachmentsBlock(surveyId: surveyId, questionId: item.id),
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: team == null ? null : () => (context.findAncestorStateOfType<_SurveyRunnerPageState>())?._openMediaSheet(questionId: item.id),
+            icon: const Icon(Icons.perm_media_outlined),
+            label: const Text('Add media'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AnnotationAnswer extends ConsumerWidget {
+  const _AnnotationAnswer({required this.item});
+  final QuestionItem item;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final team = ref.watch(selectedTeamProvider);
+    final surveyId = (context.findAncestorWidgetOfExactType<SurveyRunnerPage>()!).surveyId;
+    return Wrap(
+      spacing: 8,
+      children: [
+        ElevatedButton.icon(
+          onPressed: team == null ? null : () async {
+            final db = ref.read(databaseProvider);
+            await AttachmentsService(db, Supabase.instance.client).addSketchOverPhotoFromGallery(context: context, teamId: team.id, surveyId: surveyId, questionId: item.id);
+          },
+          icon: const Icon(Icons.edit),
+          label: Text(item.label.isEmpty ? 'Sketch over photo' : item.label),
+        ),
+      ],
+    );
+  }
+}
+
+class _SignatureAnswer extends ConsumerWidget {
+  const _SignatureAnswer({required this.item});
+  final QuestionItem item;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final team = ref.watch(selectedTeamProvider);
+    final surveyId = (context.findAncestorWidgetOfExactType<SurveyRunnerPage>()!).surveyId;
+    return ElevatedButton.icon(
+      onPressed: team == null ? null : () async {
+        final db = ref.read(databaseProvider);
+        await AttachmentsService(db, Supabase.instance.client).addSignature(context: context, teamId: team.id, surveyId: surveyId, questionId: item.id);
+      },
+      icon: const Icon(Icons.draw),
+      label: Text(item.label.isEmpty ? 'Add signature' : item.label),
+    );
+  }
+}
+
+class _SketchOnlyAnswer extends ConsumerWidget {
+  const _SketchOnlyAnswer({required this.item});
+  final QuestionItem item;
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final team = ref.watch(selectedTeamProvider);
+    final surveyId = (context.findAncestorWidgetOfExactType<SurveyRunnerPage>()!).surveyId;
+    return ElevatedButton.icon(
+      onPressed: team == null ? null : () async {
+        final db = ref.read(databaseProvider);
+        await AttachmentsService(db, Supabase.instance.client).addSketch(context: context, teamId: team.id, surveyId: surveyId, questionId: item.id);
+      },
+      icon: const Icon(Icons.brush),
+      label: Text(item.label.isEmpty ? 'Add sketch' : item.label),
+    );
   }
 }
 
@@ -395,6 +882,15 @@ class _TextAnswerState extends State<_TextAnswer> {
           labelText: widget.item.label + (widget.item.required ? ' *' : ''),
           border: const OutlineInputBorder(),
         ),
+        textCapitalization: TextCapitalization.sentences,
+        keyboardType: widget.item.type == QuestionType.text && widget.item.multiLine
+            ? TextInputType.multiline
+            : TextInputType.text,
+        minLines: widget.item.type == QuestionType.text && widget.item.multiLine ? 3 : 1,
+        maxLines: widget.item.type == QuestionType.text && widget.item.multiLine ? null : 1,
+        textInputAction: widget.item.type == QuestionType.text && widget.item.multiLine
+            ? TextInputAction.newline
+            : TextInputAction.done,
         onChanged: widget.onChanged,
       ),
     );
@@ -589,72 +1085,10 @@ class _AttachmentsBlock extends ConsumerWidget {
       stream: stream,
       builder: (context, snapshot) {
         final items = snapshot.data ?? const [];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: items.map((a) => Chip(label: Text(a.storagePath ?? a.localPath ?? 'attachment'))).toList(),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: team == null
-                      ? null
-                      : () async {
-                          final svc = AttachmentsService(db, Supabase.instance.client);
-                          await svc.addPhoto(context: context, teamId: team.id, surveyId: surveyId, questionId: questionId);
-                        },
-                  icon: const Icon(Icons.photo_camera),
-                  label: const Text('Camera'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: team == null
-                      ? null
-                      : () async {
-                          final svc = AttachmentsService(db, Supabase.instance.client);
-                          await svc.addPhotoFromGallery(context: context, teamId: team.id, surveyId: surveyId, questionId: questionId);
-                        },
-                  icon: const Icon(Icons.photo_library),
-                  label: const Text('Gallery'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: team == null
-                      ? null
-                      : () async {
-                          final svc = AttachmentsService(db, Supabase.instance.client);
-                          await svc.addSketch(context: context, teamId: team.id, surveyId: surveyId, questionId: questionId);
-                        },
-                  icon: const Icon(Icons.brush),
-                  label: const Text('Sketch'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: team == null
-                      ? null
-                      : () async {
-                          final svc = AttachmentsService(db, Supabase.instance.client);
-                          await svc.addSketchOverPhotoFromGallery(context: context, teamId: team.id, surveyId: surveyId, questionId: questionId);
-                        },
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Sketch over photo'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: team == null
-                      ? null
-                      : () async {
-                          final svc = AttachmentsService(db, Supabase.instance.client);
-                          await svc.addSketchOverCamera(context: context, teamId: team.id, surveyId: surveyId, questionId: questionId);
-                        },
-                  icon: const Icon(Icons.add_a_photo),
-                  label: const Text('Sketch over camera'),
-                ),
-              ],
-            ),
-          ],
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: items.map((a) => Chip(label: Text(a.storagePath ?? a.localPath ?? 'attachment'))).toList(),
         );
       },
     );

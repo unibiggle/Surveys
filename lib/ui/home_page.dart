@@ -28,6 +28,42 @@ class HomePage extends ConsumerWidget {
         title: Text('Surveys${selectedTeam != null ? ' • ${selectedTeam.name}' : ''}'),
         actions: [
           IconButton(
+            tooltip: 'Profile',
+            onPressed: () async {
+              final client = Supabase.instance.client;
+              final uid = client.auth.currentUser?.id;
+              if (uid == null) return;
+              final currentName = await client
+                  .from('profiles')
+                  .select('full_name')
+                  .eq('id', uid)
+                  .maybeSingle()
+                  .then((v) => (v?['full_name'] as String?) ?? '');
+              final ctrl = TextEditingController(text: currentName);
+              final name = await showDialog<String>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Edit profile'),
+                  content: TextField(
+                    controller: ctrl,
+                    decoration: const InputDecoration(labelText: 'Full name', border: OutlineInputBorder()),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                    ElevatedButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Save')),
+                  ],
+                ),
+              );
+              if (name == null) return;
+              await client.from('profiles').upsert({'id': uid, 'full_name': name});
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile updated')));
+              }
+            },
+            icon: const Icon(Icons.person),
+          ),
+          IconButton(
             tooltip: 'Sync',
             onPressed: () async {
               final sync = ref.read(syncServiceProvider);

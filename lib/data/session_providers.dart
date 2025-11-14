@@ -20,3 +20,17 @@ class SelectedTeam {
 
 final selectedTeamProvider = StateProvider<SelectedTeam?>((ref) => null);
 
+// Current user's full name from profiles (fallback to auth metadata/email)
+final currentUserFullNameProvider = FutureProvider<String?>((ref) async {
+  final client = Supabase.instance.client;
+  final uid = client.auth.currentUser?.id;
+  if (uid == null) return null;
+  try {
+    final res = await client.from('profiles').select('full_name').eq('id', uid).maybeSingle();
+    final name = (res?['full_name'] as String?)?.trim();
+    if (name != null && name.isNotEmpty) return name;
+  } catch (_) {
+    // ignore and fallback
+  }
+  return client.auth.currentUser?.userMetadata?['full_name'] as String? ?? client.auth.currentUser?.email;
+});

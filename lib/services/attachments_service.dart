@@ -153,6 +153,25 @@ class AttachmentsService {
     await _afterUpload(id: id, surveyId: surveyId, questionId: questionId, storagePath: storagePath, type: 'sketch');
   }
 
+  Future<void> addSignature({
+    required BuildContext context,
+    required String teamId,
+    required String surveyId,
+    required String questionId,
+  }) async {
+    final resultBytes = await Navigator.push<Uint8List?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const SketchPage(),
+      ),
+    );
+    if (resultBytes == null) return;
+    final id = _uuid.v4();
+    await _db.addLocalAttachment(id: id, surveyId: surveyId, questionId: questionId, type: 'signature', localPath: 'signature.png');
+    final storagePath = await _uploadBytes(teamId: teamId, surveyId: surveyId, filenameHint: 'signature.png', bytes: resultBytes);
+    await _afterUpload(id: id, surveyId: surveyId, questionId: questionId, storagePath: storagePath, type: 'signature');
+  }
+
   Future<void> addSketchOverPhotoFromGallery({
     required BuildContext context,
     required String teamId,

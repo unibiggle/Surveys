@@ -8,7 +8,36 @@ enum QuestionType {
   dropdown,
   likert5,
   dateTime,
+  number,
+  checkbox,
+  media,
+  slider,
+  annotation,
+  signature,
+  sketch,
+  location,
+  person,
+  instruction,
   // Future types: rating custom, ranking, matrix, number, date, signature, photo, sketch
+}
+
+class VisibleCondition {
+  final String questionId;
+  final String op; // equals | notEquals | contains
+  final String value;
+  const VisibleCondition({required this.questionId, required this.op, required this.value});
+
+  Map<String, dynamic> toJson() => {
+        'questionId': questionId,
+        'op': op,
+        'value': value,
+      };
+
+  static VisibleCondition fromJson(Map<String, dynamic> json) => VisibleCondition(
+        questionId: json['questionId'] as String,
+        op: (json['op'] as String?) ?? 'equals',
+        value: (json['value']?.toString() ?? ''),
+      );
 }
 
 QuestionType questionTypeFromString(String s) {
@@ -27,6 +56,26 @@ QuestionType questionTypeFromString(String s) {
       return QuestionType.likert5;
     case 'dateTime':
       return QuestionType.dateTime;
+    case 'number':
+      return QuestionType.number;
+    case 'checkbox':
+      return QuestionType.checkbox;
+    case 'media':
+      return QuestionType.media;
+    case 'slider':
+      return QuestionType.slider;
+    case 'annotation':
+      return QuestionType.annotation;
+    case 'signature':
+      return QuestionType.signature;
+    case 'sketch':
+      return QuestionType.sketch;
+    case 'location':
+      return QuestionType.location;
+    case 'person':
+      return QuestionType.person;
+    case 'instruction':
+      return QuestionType.instruction;
     default:
       return QuestionType.text;
   }
@@ -48,6 +97,26 @@ String questionTypeToString(QuestionType t) {
       return 'likert5';
     case QuestionType.dateTime:
       return 'dateTime';
+    case QuestionType.number:
+      return 'number';
+    case QuestionType.checkbox:
+      return 'checkbox';
+    case QuestionType.media:
+      return 'media';
+    case QuestionType.slider:
+      return 'slider';
+    case QuestionType.annotation:
+      return 'annotation';
+    case QuestionType.signature:
+      return 'signature';
+    case QuestionType.sketch:
+      return 'sketch';
+    case QuestionType.location:
+      return 'location';
+    case QuestionType.person:
+      return 'person';
+    case QuestionType.instruction:
+      return 'instruction';
   }
 }
 
@@ -101,12 +170,14 @@ class TemplateSection {
   final String title;
   final String? description;
   final List<QuestionItem> items;
+  final List<VisibleCondition>? visibleIf;
 
   TemplateSection({
     required this.id,
     required this.title,
     this.description,
     required this.items,
+    this.visibleIf,
   });
 
   Map<String, dynamic> toJson() => {
@@ -114,6 +185,7 @@ class TemplateSection {
         'title': title,
         'description': description,
         'items': items.map((e) => e.toJson()).toList(),
+        if (visibleIf != null) 'visibleIf': visibleIf!.map((e) => e.toJson()).toList(),
       };
 
   static TemplateSection fromJson(Map<String, dynamic> json) => TemplateSection(
@@ -122,6 +194,9 @@ class TemplateSection {
         description: json['description'] as String?,
         items: (json['items'] as List<dynamic>)
             .map((e) => QuestionItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        visibleIf: (json['visibleIf'] as List<dynamic>?)
+            ?.map((e) => VisibleCondition.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 }
@@ -133,6 +208,8 @@ class QuestionItem {
   final bool required; // enforce required answers
   final List<String>? options; // used for singleChoice
   final bool allowAttachment; // allow photo attachments on this question
+  final bool multiLine; // for long text answers
+  final List<VisibleCondition>? visibleIf; // AND semantics
 
   QuestionItem({
     required this.id,
@@ -141,6 +218,8 @@ class QuestionItem {
     this.required = false,
     this.options,
     this.allowAttachment = false,
+    this.multiLine = false,
+    this.visibleIf,
   });
 
   Map<String, dynamic> toJson() => {
@@ -150,6 +229,8 @@ class QuestionItem {
         'required': required,
         'options': options,
         'allowAttachment': allowAttachment,
+        'multiLine': multiLine,
+        if (visibleIf != null) 'visibleIf': visibleIf!.map((e) => e.toJson()).toList(),
       };
 
   static QuestionItem fromJson(Map<String, dynamic> json) => QuestionItem(
@@ -159,5 +240,9 @@ class QuestionItem {
         required: (json['required'] as bool?) ?? false,
         options: (json['options'] as List<dynamic>?)?.map((e) => e.toString()).toList(),
         allowAttachment: (json['allowAttachment'] as bool?) ?? false,
+        multiLine: (json['multiLine'] as bool?) ?? false,
+        visibleIf: (json['visibleIf'] as List<dynamic>?)
+            ?.map((e) => VisibleCondition.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }

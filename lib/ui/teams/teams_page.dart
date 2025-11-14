@@ -47,7 +47,11 @@ class _TeamsPageState extends ConsumerState<TeamsPage> {
       builder: (context) {
         return AlertDialog(
           title: const Text('New team'),
-          content: TextField(controller: ctrl, decoration: const InputDecoration(labelText: 'Team name')),
+          content: TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(labelText: 'Team name'),
+            textCapitalization: TextCapitalization.sentences,
+          ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
             ElevatedButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Create')),
