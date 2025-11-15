@@ -829,7 +829,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                   ),
                 ),
               ],
-            ),
+            ],
             if (!_showVisibility) const SizedBox(height: 4),
             // Attachments are now represented as dedicated answer types (Media/Sketch/Annotation/Signature)
           ],
