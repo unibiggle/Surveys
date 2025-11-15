@@ -11,6 +11,7 @@ import '../../data/providers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/template_schema.dart';
+import 'reorder_questions_page.dart';
 
 class TemplateBuilderPage extends ConsumerStatefulWidget {
   const TemplateBuilderPage({super.key, required this.initialSchema});
@@ -250,6 +251,30 @@ class _TemplateBuilderPageState extends ConsumerState<TemplateBuilderPage> {
               ActionChip(label: const Text('Add section'), avatar: const Icon(Icons.add), onPressed: _addSection),
               if (_schema.sections.length > 1)
                 ActionChip(label: const Text('Delete section'), avatar: const Icon(Icons.delete_outline), onPressed: _deleteCurrentSection),
+              ActionChip(
+                label: const Text('Reorder questions'),
+                avatar: const Icon(Icons.drag_handle),
+                onPressed: () async {
+                  final current = _schema.sections[_currentSectionIndex];
+                  final result = await Navigator.push<List<QuestionItem>>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ReorderQuestionsPage(initial: current.items),
+                    ),
+                  );
+                  if (result != null) {
+                    setState(() {
+                      _schema.sections[_currentSectionIndex] = TemplateSection(
+                        id: current.id,
+                        title: current.title,
+                        description: current.description,
+                        items: result,
+                        visibleIf: current.visibleIf,
+                      );
+                    });
+                  }
+                },
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -298,27 +323,46 @@ class _TemplateBuilderPageState extends ConsumerState<TemplateBuilderPage> {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: TextField(
-                          decoration: const InputDecoration(labelText: 'Question ID', border: OutlineInputBorder()),
-                          controller: TextEditingController(text: cond.questionId),
-                          onChanged: (v) {
-                            final list = List<VisibleCondition>.of(section.visibleIf ?? const <VisibleCondition>[]);
-                            list[i] = VisibleCondition(questionId: v, op: cond.op, value: cond.value);
-                            setState(() => _schema.sections[_currentSectionIndex] = TemplateSection(
-                                  id: section.id,
-                                  title: section.title,
-                                  description: section.description,
-                                  items: section.items,
-                                  visibleIf: list,
-                                ));
-                          },
-                        ),
+                        child: Builder(builder: (context) {
+                          final all = <MapEntry<String, String>>[];
+                          for (final sec in _schema.sections) {
+                            for (final qq in sec.items) {
+                              final label = sec.title.isNotEmpty ? '${sec.title}: ${qq.label}' : qq.label;
+                              all.add(MapEntry(qq.id, label));
+                            }
+                          }
+                          return InputDecorator(
+                            decoration: const InputDecoration(labelText: 'Question', border: OutlineInputBorder()),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                key: ValueKey('sec-cond-${section.id}-$i-q'),
+                                isExpanded: true,
+                                value: (section.visibleIf?[i].questionId.isNotEmpty ?? false)
+                                    ? section.visibleIf![i].questionId
+                                    : null,
+                                items: all.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
+                                onChanged: (v) {
+                                  final list = List<VisibleCondition>.of(section.visibleIf ?? const <VisibleCondition>[]);
+                                  list[i] = VisibleCondition(questionId: v ?? '', op: cond.op, value: cond.value);
+                                  setState(() => _schema.sections[_currentSectionIndex] = TemplateSection(
+                                        id: section.id,
+                                        title: section.title,
+                                        description: section.description,
+                                        items: section.items,
+                                        visibleIf: list,
+                                      ));
+                                },
+                              ),
+                            ),
+                          );
+                        }),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: TextField(
+                        child: TextFormField(
+                          key: ValueKey('sec-cond-${section.id}-$i-val'),
+                          initialValue: cond.value,
                           decoration: const InputDecoration(labelText: 'Value', border: OutlineInputBorder()),
-                          controller: TextEditingController(text: cond.value),
                           onChanged: (v) {
                             final list = List<VisibleCondition>.of(section.visibleIf ?? const <VisibleCondition>[]);
                             list[i] = VisibleCondition(questionId: cond.questionId, op: cond.op, value: v);
@@ -389,6 +433,19 @@ class _TemplateBuilderPageState extends ConsumerState<TemplateBuilderPage> {
                   child: _QuestionEditor(
                     item: section.items[i],
                     reorderIndex: i,
+                    // Build target list of prior questions only (all sections before + items before in current section)
+                    targetQuestionOptions: () {
+                      final opts = <MapEntry<String, String>>[];
+                      for (final sec in _schema.sections) {
+                        for (final qq in sec.items) {
+                          final label = sec.title.isNotEmpty
+                              ? '${sec.title}: ${qq.label}'
+                              : qq.label;
+                          opts.add(MapEntry(qq.id, label));
+                        }
+                      }
+                      return opts;
+                    }(),
                     onChanged: (updated) {
                       final idx = section.items.indexWhere((e) => e.id == updated.id);
                       setState(() {
@@ -417,11 +474,12 @@ class _TemplateBuilderPageState extends ConsumerState<TemplateBuilderPage> {
 }
 
 class _QuestionEditor extends StatefulWidget {
-  const _QuestionEditor({super.key, required this.item, required this.onChanged, required this.onDelete, this.reorderIndex});
+  const _QuestionEditor({super.key, required this.item, required this.onChanged, required this.onDelete, this.reorderIndex, this.targetQuestionOptions = const []});
   final QuestionItem item;
   final ValueChanged<QuestionItem> onChanged;
   final VoidCallback onDelete;
   final int? reorderIndex;
+  final List<MapEntry<String, String>> targetQuestionOptions;
 
   @override
   State<_QuestionEditor> createState() => _QuestionEditorState();
@@ -660,30 +718,43 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: TextField(
-                            decoration: const InputDecoration(labelText: 'Question ID', border: OutlineInputBorder()),
-                            controller: TextEditingController(text: cond.questionId),
-                            onChanged: (v) {
-                              final list = List<VisibleCondition>.of(widget.item.visibleIf ?? const <VisibleCondition>[]);
-                              list[i] = VisibleCondition(questionId: v, op: cond.op, value: cond.value);
-                              widget.onChanged(QuestionItem(
-                                id: widget.item.id,
-                                type: widget.item.type,
-                                label: _labelCtrl.text,
-                                required: widget.item.required,
-                                options: widget.item.options,
-                                allowAttachment: widget.item.allowAttachment,
-                                multiLine: widget.item.multiLine,
-                                visibleIf: list,
-                              ));
-                            },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(labelText: 'Question', border: OutlineInputBorder()),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                key: ValueKey('ql-cond-${widget.item.id}-$i-q'),
+                                isExpanded: true,
+                                value: (widget.item.visibleIf?[i].questionId.isNotEmpty ?? false)
+                                    ? widget.item.visibleIf![i].questionId
+                                    : null,
+                                items: widget.targetQuestionOptions
+                                    .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                                    .toList(),
+                                onChanged: (v) {
+                                  final list = List<VisibleCondition>.of(widget.item.visibleIf ?? const <VisibleCondition>[]);
+                                  list[i] = VisibleCondition(questionId: v ?? '', op: cond.op, value: cond.value);
+                                  widget.onChanged(QuestionItem(
+                                    id: widget.item.id,
+                                    type: widget.item.type,
+                                    label: _labelCtrl.text,
+                                    required: widget.item.required,
+                                    options: widget.item.options,
+                                    allowAttachment: widget.item.allowAttachment,
+                                    multiLine: widget.item.multiLine,
+                                    visibleIf: list,
+                                  ));
+                                  setState(() {});
+                                },
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: TextField(
+                          child: TextFormField(
+                            key: ValueKey('ql-cond-${widget.item.id}-$i-val'),
+                            initialValue: cond.value,
                             decoration: const InputDecoration(labelText: 'Value', border: OutlineInputBorder()),
-                            controller: TextEditingController(text: cond.value),
                             onChanged: (v) {
                               final list = List<VisibleCondition>.of(widget.item.visibleIf ?? const <VisibleCondition>[]);
                               list[i] = VisibleCondition(questionId: cond.questionId, op: cond.op, value: v);

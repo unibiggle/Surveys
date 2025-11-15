@@ -67,49 +67,48 @@ class _SketchPageState extends State<SketchPage> {
           IconButton(icon: const Icon(Icons.save), onPressed: _save),
         ],
       ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            children: [
-              _colorSwatch(Colors.red),
-              _colorSwatch(Colors.green),
-              _colorSwatch(Colors.blue),
-              _colorSwatch(Colors.yellow.shade700),
-              const SizedBox(width: 12),
-              const Text('Width'),
-              Expanded(
-                child: Slider(
-                  min: 1,
-                  max: 16,
-                  value: _width,
-                  onChanged: (v) => setState(() => _width = v),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return Center(
-            child: AspectRatio(
-              aspectRatio: 3 / 5,
-              child: RepaintBoundary(
-                key: _repaintKey,
-                child: GestureDetector(
-                  onPanStart: (d) => _start(d.localPosition),
-                  onPanUpdate: (d) => _update(d.localPosition),
-                  onPanEnd: (_) => _end(),
-                  child: CustomPaint(
-                    painter: _SketchPainter(strokes: _strokes, bg: _bgImage),
-                    child: Container(color: Colors.white),
-                  ),
+      body: Column(
+        children: [
+          Expanded(
+            child: RepaintBoundary(
+              key: _repaintKey,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanStart: (d) => _start(d.localPosition),
+                onPanUpdate: (d) => _update(d.localPosition),
+                onPanEnd: (_) => _end(),
+                child: CustomPaint(
+                  painter: _SketchPainter(strokes: _strokes, bg: _bgImage),
+                  child: const SizedBox.expand(),
                 ),
               ),
             ),
-          );
-        },
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  _colorSwatch(Colors.red),
+                  _colorSwatch(Colors.green),
+                  _colorSwatch(Colors.blue),
+                  _colorSwatch(Colors.yellow.shade700),
+                  const SizedBox(width: 12),
+                  const Text('Width'),
+                  Expanded(
+                    child: Slider(
+                      min: 1,
+                      max: 16,
+                      value: _width,
+                      onChanged: (v) => setState(() => _width = v),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -155,7 +154,14 @@ class _SketchPainter extends CustomPainter {
       paint
         ..color = s.color
         ..strokeWidth = s.width;
-      if (s.points.length < 2) continue;
+      if (s.points.isEmpty) continue;
+      if (s.points.length == 1) {
+        // Draw a dot for single taps
+        final p = s.points.first;
+        canvas.drawCircle(p, s.width / 2, paint..style = PaintingStyle.fill);
+        paint.style = PaintingStyle.stroke;
+        continue;
+      }
       final path = Path()..moveTo(s.points.first.dx, s.points.first.dy);
       for (int i = 1; i < s.points.length; i++) {
         path.lineTo(s.points[i].dx, s.points[i].dy);

@@ -69,6 +69,8 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
   late final ScrollController _scrollController = ScrollController();
   final List<GlobalKey> _sectionKeys = [];
   List<bool> _expanded = const [];
+  final Map<String, TextEditingController> _actionCtrls = {};
+  final Set<String> _openActionEditors = {};
 
   @override
   void initState() {
@@ -245,6 +247,13 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
         );
       },
     );
+  }
+
+  TextEditingController _getActionCtrl(String qid) {
+    return _actionCtrls.putIfAbsent(qid, () {
+      final initial = (_answers['action:$qid'] as String?) ?? '';
+      return TextEditingController(text: initial);
+    });
   }
 
   String _displayValue(QuestionItem q, dynamic v) {
@@ -437,27 +446,40 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
                               children: [
                                 TextButton.icon(
                                   onPressed: () async {
-                                    final initial = (_answers['note:${q.id}'] as String?) ?? '';
-                                    final ctrl = TextEditingController(text: initial);
-                                    final text = await showDialog<String>(
+                                    // Toggle inline note editor below action row
+                                    final key = 'note:${q.id}';
+                                    final current = (_answers[key] as String?) ?? '';
+                                    final ctrl = TextEditingController(text: current);
+                                    final result = await showModalBottomSheet<String>(
                                       context: context,
-                                      builder: (_) => AlertDialog(
-                                        title: const Text('Add note'),
-                                        content: TextField(
-                                          controller: ctrl,
-                                          minLines: 3,
-                                          maxLines: null,
-                                          decoration: const InputDecoration(border: OutlineInputBorder()),
-                                          textCapitalization: TextCapitalization.sentences,
+                                      builder: (ctx) => SafeArea(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(12.0),
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              TextField(
+                                                controller: ctrl,
+                                                minLines: 3,
+                                                maxLines: null,
+                                                decoration: const InputDecoration(labelText: 'Note', border: OutlineInputBorder()),
+                                                textCapitalization: TextCapitalization.sentences,
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Row(
+                                                mainAxisAlignment: MainAxisAlignment.end,
+                                                children: [
+                                                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                                                  ElevatedButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: const Text('Save')),
+                                                ],
+                                              )
+                                            ],
+                                          ),
                                         ),
-                                        actions: [
-                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-                                          ElevatedButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Save')),
-                                        ],
                                       ),
                                     );
-                                    if (text != null) {
-                                      setState(() => _answers['note:${q.id}'] = text);
+                                    if (result != null) {
+                                      setState(() => _answers[key] = result);
                                     }
                                   },
                                   icon: const Icon(Icons.note_add_outlined),
@@ -471,29 +493,15 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
                                 ),
                                 const SizedBox(width: 8),
                                 TextButton.icon(
-                                  onPressed: () async {
-                                    final initial = (_answers['action:${q.id}'] as String?) ?? '';
-                                    final ctrl = TextEditingController(text: initial);
-                                    final text = await showDialog<String>(
-                                      context: context,
-                                      builder: (_) => AlertDialog(
-                                        title: const Text('Action'),
-                                        content: TextField(
-                                          controller: ctrl,
-                                          minLines: 2,
-                                          maxLines: null,
-                                          decoration: const InputDecoration(hintText: 'Describe follow-up action', border: OutlineInputBorder()),
-                                          textCapitalization: TextCapitalization.sentences,
-                                        ),
-                                        actions: [
-                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-                                          ElevatedButton(onPressed: () => Navigator.pop(context, ctrl.text.trim()), child: const Text('Save')),
-                                        ],
-                                      ),
-                                    );
-                                    if (text != null) {
-                                      setState(() => _answers['action:${q.id}'] = text);
-                                    }
+                                  onPressed: () {
+                                    final qid = q.id;
+                                    setState(() {
+                                      if (_openActionEditors.contains(qid)) {
+                                        _openActionEditors.remove(qid);
+                                      } else {
+                                        _openActionEditors.add(qid);
+                                      }
+                                    });
                                   },
                                   icon: const Icon(Icons.task_alt_outlined),
                                   label: const Text('Action'),
@@ -501,6 +509,18 @@ class _SurveyRunnerPageState extends ConsumerState<SurveyRunnerPage> {
                               ],
                             ),
                           ),
+                          if (_openActionEditors.contains(q.id) || ((_answers['action:${q.id}'] as String?)?.isNotEmpty == true))
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6.0, bottom: 4.0),
+                              child: TextField(
+                                controller: _getActionCtrl(q.id),
+                                minLines: 2,
+                                maxLines: null,
+                                decoration: const InputDecoration(hintText: 'Describe follow-up action', border: OutlineInputBorder()),
+                                textCapitalization: TextCapitalization.sentences,
+                                onChanged: (v) => _answers['action:${q.id}'] = v,
+                              ),
+                            ),
                           // Show attachments list below actions
                           Padding(
                             padding: const EdgeInsets.only(left: 4.0, top: 6.0, bottom: 12.0),
@@ -577,21 +597,47 @@ class _QuestionAnswerWidget extends StatelessWidget {
   }
 }
 
-class _NumberAnswer extends StatelessWidget {
+class _NumberAnswer extends StatefulWidget {
   const _NumberAnswer({required this.item, required this.value, required this.onChanged});
   final QuestionItem item;
   final num? value;
   final ValueChanged<num?> onChanged;
   @override
+  State<_NumberAnswer> createState() => _NumberAnswerState();
+}
+
+class _NumberAnswerState extends State<_NumberAnswer> {
+  late TextEditingController _ctrl;
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.value?.toString() ?? '');
+  }
+
+  @override
+  void didUpdateWidget(covariant _NumberAnswer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final newText = widget.value?.toString() ?? '';
+    if (_ctrl.text != newText) {
+      _ctrl.text = newText;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final ctrl = TextEditingController(text: value?.toString() ?? '');
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: TextField(
-        controller: ctrl,
+        controller: _ctrl,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(labelText: item.label + (item.required ? ' *' : ''), border: const OutlineInputBorder()),
-        onChanged: (v) => onChanged(num.tryParse(v)),
+        decoration: InputDecoration(labelText: widget.item.label + (widget.item.required ? ' *' : ''), border: const OutlineInputBorder()),
+        onChanged: (v) => widget.onChanged(num.tryParse(v)),
       ),
     );
   }
