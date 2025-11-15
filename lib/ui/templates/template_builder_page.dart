@@ -489,6 +489,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
   late TextEditingController _labelCtrl;
   late TextEditingController _optionsCtrl; // comma-separated for singleChoice
   late FocusNode _labelFocus;
+  bool _showVisibility = false;
 
   @override
   void initState() {
@@ -496,6 +497,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
     _labelCtrl = TextEditingController(text: widget.item.label);
     _optionsCtrl = TextEditingController(text: (widget.item.options ?? []).join(','));
     _labelFocus = FocusNode();
+    _showVisibility = (widget.item.visibleIf?.isNotEmpty ?? false);
     _labelFocus.addListener(() {
       if (_labelFocus.hasFocus) {
         final txt = _labelCtrl.text.trim().toLowerCase();
@@ -609,17 +611,6 @@ class _QuestionEditorState extends State<_QuestionEditor> {
             onChanged: (v) => _emitChanged(label: v),
           ),
           const SizedBox(height: 6),
-          Row(
-            children: [
-              Text('ID: ${widget.item.id.substring(0, 8)}…', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'Copy ID',
-                icon: const Icon(Icons.copy, size: 16),
-                onPressed: () => Clipboard.setData(ClipboardData(text: widget.item.id)),
-              ),
-            ],
-          ),
             if (widget.item.type == QuestionType.singleChoice ||
                 widget.item.type == QuestionType.multiChoice ||
                 widget.item.type == QuestionType.dropdown) ...[
@@ -654,12 +645,16 @@ class _QuestionEditorState extends State<_QuestionEditor> {
               const SizedBox(height: 8),
               const Text('Instruction text will be displayed as a read‑only block.'),
             ],
-            if (widget.item.type == QuestionType.text) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('Multiline'),
-                  const SizedBox(width: 8),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (widget.item.type == QuestionType.text) ...[
+                  Icon(
+                    Icons.wrap_text,
+                    size: 18,
+                    color: widget.item.multiLine ? Theme.of(context).colorScheme.primary : Colors.grey,
+                  ),
+                  const SizedBox(width: 4),
                   Switch(
                     value: widget.item.multiLine,
                     onChanged: (v) {
@@ -671,22 +666,37 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                         options: widget.item.options,
                         allowAttachment: widget.item.allowAttachment,
                         multiLine: v,
+                        visibleIf: widget.item.visibleIf,
                       ));
                       setState(() {});
                     },
                   ),
+                  const SizedBox(width: 8),
                 ],
-              )
-            ],
-            const SizedBox(height: 8),
-            ExpansionTile(
-              title: const Text('Visibility (show when conditions are met)'),
-              initiallyExpanded: false,
-              children: [
-                ...(widget.item.visibleIf ?? const [])
-                    .asMap()
-                    .entries
-                    .map((entry) {
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Visibility',
+                  icon: Icon(
+                    Icons.visibility,
+                    color: (widget.item.visibleIf?.isNotEmpty ?? false)
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                  onPressed: () => setState(() => _showVisibility = !_showVisibility),
+                ),
+              ],
+            ),
+            if (_showVisibility) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Visibility',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 4),
+              ...(widget.item.visibleIf ?? const [])
+                  .asMap()
+                  .entries
+                  .map((entry) {
                   final i = entry.key;
                   final cond = entry.value;
                   return Padding(
@@ -810,7 +820,9 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                         multiLine: widget.item.multiLine,
                         visibleIf: list,
                       ));
-                      setState(() {});
+                      setState(() {
+                        _showVisibility = true;
+                      });
                     },
                     icon: const Icon(Icons.add),
                     label: const Text('Add condition'),
@@ -818,6 +830,7 @@ class _QuestionEditorState extends State<_QuestionEditor> {
                 ),
               ],
             ),
+            if (!_showVisibility) const SizedBox(height: 4),
             // Attachments are now represented as dedicated answer types (Media/Sketch/Annotation/Signature)
           ],
         ),

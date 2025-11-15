@@ -13,8 +13,9 @@ class SketchPage extends StatefulWidget {
   State<SketchPage> createState() => _SketchPageState();
 }
 
-enum _Tool { pen, rect, eraser }
-enum _StrokeKind { pen, rect }
+enum _Tool { pen, shape, eraser }
+enum _StrokeKind { pen, rect, circle, arrow, triangle, callout }
+enum _ShapeKind { rect, circle, arrow, triangle, callout }
 
 class _Stroke {
   _Stroke({required this.kind, required this.color, required this.width, required this.points});
@@ -29,6 +30,8 @@ class _SketchPageState extends State<SketchPage> {
   final TransformationController _transform = TransformationController();
   final List<_Stroke> _strokes = [];
   _Stroke? _current;
+  bool _showWidthPicker = false;
+  _ShapeKind _shapeKind = _ShapeKind.rect;
   Color _color = Colors.red;
   double _width = 4.0;
   bool _showGrid = false;
@@ -74,7 +77,30 @@ class _SketchPageState extends State<SketchPage> {
 
   void _startAt(Offset scenePoint) {
     final p = _snap(scenePoint);
-    final kind = _tool == _Tool.pen ? _StrokeKind.pen : _StrokeKind.rect;
+    _StrokeKind kind;
+    if (_tool == _Tool.pen) {
+      kind = _StrokeKind.pen;
+    } else if (_tool == _Tool.shape) {
+      switch (_shapeKind) {
+        case _ShapeKind.rect:
+          kind = _StrokeKind.rect;
+          break;
+        case _ShapeKind.circle:
+          kind = _StrokeKind.circle;
+          break;
+        case _ShapeKind.arrow:
+          kind = _StrokeKind.arrow;
+          break;
+        case _ShapeKind.triangle:
+          kind = _StrokeKind.triangle;
+          break;
+        case _ShapeKind.callout:
+          kind = _StrokeKind.callout;
+          break;
+      }
+    } else {
+      return;
+    }
     _current = _Stroke(kind: kind, color: _color, width: _width, points: [p]);
     setState(() => _strokes.add(_current!));
   }
@@ -92,7 +118,22 @@ class _SketchPageState extends State<SketchPage> {
     final p = scenePoint;
     final threshold = _width + 4.0;
     setState(() {
-      _strokes.removeWhere((s) => _hitStroke(s, p, threshold));
+      for (var i = _strokes.length - 1; i >= 0; i--) {
+        final s = _strokes[i];
+        final hit = _hitStroke(s, p, threshold);
+        if (!hit) continue;
+        if (_snapToGrid && s.kind == _StrokeKind.pen && s.points.length > 1) {
+          final idx = _nearestPointIndex(s.points, p);
+          if (idx <= 0) {
+            _strokes.removeAt(i);
+          } else if (idx < s.points.length) {
+            s.points.removeRange(idx, s.points.length);
+          }
+        } else {
+          _strokes.removeAt(i);
+        }
+        break;
+      }
     });
   }
 
@@ -105,6 +146,10 @@ class _SketchPageState extends State<SketchPage> {
         }
         return false;
       case _StrokeKind.rect:
+      case _StrokeKind.circle:
+      case _StrokeKind.arrow:
+      case _StrokeKind.triangle:
+      case _StrokeKind.callout:
         final rect = Rect.fromPoints(s.points.first, s.points.last);
         final outer = rect.inflate(threshold);
         if (!outer.contains(p)) return false;
@@ -112,6 +157,19 @@ class _SketchPageState extends State<SketchPage> {
         if (inner.contains(p)) return false;
         return true;
     }
+  }
+
+  int _nearestPointIndex(List<Offset> points, Offset p) {
+    var best = 0;
+    var bestDist = double.infinity;
+    for (var i = 0; i < points.length; i++) {
+      final d = (points[i] - p).distanceSquared;
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
   }
 
   void _handlePointerDown(PointerDownEvent e) {
@@ -176,34 +234,51 @@ class _SketchPageState extends State<SketchPage> {
               ),
             ),
           ),
+          if (_showWidthPicker)
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    const Text('Width'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Slider(
+                        min: 1,
+                        max: 16,
+                        value: _width,
+                        onChanged: (v) => setState(() => _width = v),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           SafeArea(
             top: false,
             child: Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
                 children: [
+                  _colorSwatch(Colors.black),
                   _colorSwatch(Colors.red),
                   _colorSwatch(Colors.green),
                   _colorSwatch(Colors.blue),
                   _colorSwatch(Colors.yellow.shade700),
                   const SizedBox(width: 8),
-                  IconButton(
+                  _toolButton(
+                    context: context,
+                    tool: _Tool.pen,
+                    icon: Icons.brush,
                     tooltip: 'Pen',
-                    icon: const Icon(Icons.brush),
-                    color: _tool == _Tool.pen ? Theme.of(context).colorScheme.primary : null,
-                    onPressed: () => setState(() => _tool = _Tool.pen),
                   ),
-                  IconButton(
-                    tooltip: 'Rectangle',
-                    icon: const Icon(Icons.crop_square),
-                    color: _tool == _Tool.rect ? Theme.of(context).colorScheme.primary : null,
-                    onPressed: () => setState(() => _tool = _Tool.rect),
-                  ),
-                  IconButton(
+                  _shapeToolButton(context),
+                  _toolButton(
+                    context: context,
+                    tool: _Tool.eraser,
+                    icon: Icons.cleaning_services,
                     tooltip: 'Eraser',
-                    icon: const Icon(Icons.cleaning_services),
-                    color: _tool == _Tool.eraser ? Theme.of(context).colorScheme.primary : null,
-                    onPressed: () => setState(() => _tool = _Tool.eraser),
                   ),
                   IconButton(
                     tooltip: 'Snap to grid',
@@ -212,14 +287,9 @@ class _SketchPageState extends State<SketchPage> {
                     onPressed: () => setState(() => _snapToGrid = !_snapToGrid),
                   ),
                   const SizedBox(width: 8),
-                  const Text('Width'),
-                  Expanded(
-                    child: Slider(
-                      min: 1,
-                      max: 16,
-                      value: _width,
-                      onChanged: (v) => setState(() => _width = v),
-                    ),
+                  TextButton(
+                    onPressed: () => setState(() => _showWidthPicker = !_showWidthPicker),
+                    child: Text('Width ${_width.toStringAsFixed(0)}'),
                   ),
                 ],
               ),
@@ -237,6 +307,116 @@ class _SketchPageState extends State<SketchPage> {
       child: GestureDetector(
         onTap: () => setState(() => _color = c),
         child: CircleAvatar(radius: selected ? 14 : 12, backgroundColor: c, child: selected ? const Icon(Icons.check, size: 14, color: Colors.white) : null),
+      ),
+    );
+  }
+
+  Widget _toolButton({
+    required BuildContext context,
+    required _Tool tool,
+    required IconData icon,
+    required String tooltip,
+  }) {
+    final isSelected = _tool == tool;
+    final color = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InkResponse(
+        onTap: () => setState(() => _tool = tool),
+        radius: 24,
+        child: Container(
+          decoration: isSelected
+              ? BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color, width: 2),
+                )
+              : null,
+          padding: const EdgeInsets.all(4),
+          child: Icon(
+            icon,
+            color: isSelected ? color : null,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _shapeToolButton(BuildContext context) {
+    final isSelected = _tool == _Tool.shape;
+    final color = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InkResponse(
+        onTap: _showShapePicker,
+        radius: 24,
+        child: Container(
+          decoration: isSelected
+              ? BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color, width: 2),
+                )
+              : null,
+          padding: const EdgeInsets.all(4),
+          child: const Icon(Icons.crop_square),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showShapePicker() async {
+    setState(() => _tool = _Tool.shape);
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 24,
+              runSpacing: 16,
+              children: [
+                _shapeOption(ctx, _ShapeKind.rect, Icons.crop_square, 'Square'),
+                _shapeOption(ctx, _ShapeKind.circle, Icons.circle_outlined, 'Circle'),
+                _shapeOption(ctx, _ShapeKind.arrow, Icons.arrow_right_alt, 'Arrow'),
+                _shapeOption(ctx, _ShapeKind.triangle, Icons.change_history, 'Triangle'),
+                _shapeOption(ctx, _ShapeKind.callout, Icons.chat_bubble_outline, 'Callout'),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _shapeOption(BuildContext ctx, _ShapeKind kind, IconData icon, String label) {
+    final isCurrent = _shapeKind == kind && _tool == _Tool.shape;
+    final color = Theme.of(context).colorScheme.primary;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _shapeKind = kind;
+          _tool = _Tool.shape;
+        });
+        Navigator.of(ctx).pop();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            decoration: isCurrent
+                ? BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: color, width: 2),
+                  )
+                : null,
+            padding: const EdgeInsets.all(8),
+            child: Icon(icon, color: isCurrent ? color : null),
+          ),
+          const SizedBox(height: 4),
+          Text(label),
+        ],
       ),
     );
   }
@@ -301,6 +481,75 @@ class _SketchPainter extends CustomPainter {
           final end = s.points.last;
           final rect = Rect.fromPoints(start, end);
           canvas.drawRect(rect, paint);
+          break;
+        case _StrokeKind.circle:
+          {
+            final start = s.points.first;
+            final end = s.points.last;
+            final rect = Rect.fromPoints(start, end);
+            canvas.drawOval(rect, paint);
+          }
+          break;
+        case _StrokeKind.arrow:
+          {
+            final start = s.points.first;
+            final end = s.points.last;
+            final path = Path()
+              ..moveTo(start.dx, start.dy)
+              ..lineTo(end.dx, end.dy);
+            canvas.drawPath(path, paint);
+
+            final angle = math.atan2(end.dy - start.dy, end.dx - start.dx);
+            const arrowSize = 12.0;
+            final p1 = Offset(
+              end.dx - arrowSize * math.cos(angle - math.pi / 6),
+              end.dy - arrowSize * math.sin(angle - math.pi / 6),
+            );
+            final p2 = Offset(
+              end.dx - arrowSize * math.cos(angle + math.pi / 6),
+              end.dy - arrowSize * math.sin(angle + math.pi / 6),
+            );
+            final head = Path()
+              ..moveTo(end.dx, end.dy)
+              ..lineTo(p1.dx, p1.dy)
+              ..moveTo(end.dx, end.dy)
+              ..lineTo(p2.dx, p2.dy);
+            canvas.drawPath(head, paint);
+          }
+          break;
+        case _StrokeKind.triangle:
+          {
+            final start = s.points.first;
+            final end = s.points.last;
+            final rect = Rect.fromPoints(start, end);
+            final top = Offset(rect.center.dx, rect.top);
+            final left = Offset(rect.left, rect.bottom);
+            final right = Offset(rect.right, rect.bottom);
+            final path = Path()
+              ..moveTo(top.dx, top.dy)
+              ..lineTo(left.dx, left.dy)
+              ..lineTo(right.dx, right.dy)
+              ..close();
+            canvas.drawPath(path, paint);
+          }
+          break;
+        case _StrokeKind.callout:
+          {
+            final start = s.points.first;
+            final end = s.points.last;
+            final rect = Rect.fromPoints(start, end);
+            canvas.drawRect(rect, paint);
+
+            final tip = Offset(rect.left - 20, rect.center.dy);
+            final top = Offset(rect.left, rect.center.dy - 10);
+            final bottom = Offset(rect.left, rect.center.dy + 10);
+            final path = Path()
+              ..moveTo(tip.dx, tip.dy)
+              ..lineTo(top.dx, top.dy)
+              ..lineTo(bottom.dx, bottom.dy)
+              ..close();
+            canvas.drawPath(path, paint);
+          }
           break;
       }
     }
